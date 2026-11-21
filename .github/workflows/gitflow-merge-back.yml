@@ -1,0 +1,98 @@
+name: gitflow merge-back
+# Reusable workflow: after a release or hotfix merges into the main branch, merges main back into the
+# develop branch. Opens the pull request and merges it with a merge commit, never a squash. If it
+# conflicts, it leaves the pull request open with the steps to resolve it, and fails, so it is not
+# missed. See README.md.
+on:
+  workflow_call:
+    inputs:
+      version-command:
+        description: "Optional shell command that prints the version on the main branch, for the pull request's title"
+        type: string
+        default: ""
+      develop-branch:
+        type: string
+        default: develop
+      main-branch:
+        type: string
+        default: main
+    secrets:
+      RELEASE_TOKEN:
+        description: "Contents and pull requests: write, so the merge-back's checks run"
+        required: true
+permissions:
+  contents: read # the writes use RELEASE_TOKEN
+jobs:
+  merge-back:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      MAIN: ${{ inputs.main-branch }}
+      DEVELOP: ${{ inputs.develop-branch }}
+    steps:
+      - name: RELEASE_TOKEN is set
+        env:
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          if [ -z "$RELEASE_TOKEN" ]; then
+            echo "::error::The RELEASE_TOKEN secret is not set: see https://github.com/zmnatz/github-workflows#the-token"
+            exit 1
+          fi
+      - name: Is there anything to merge back
+        id: check
+        run: |
+          if ! gh api "repos/$GH_REPO/branches/$DEVELOP" --silent; then
+            echo "::error::No $DEVELOP branch, or RELEASE_TOKEN cannot read the repository"
+            exit 1
+          fi
+          ahead=$(gh api "repos/$GH_REPO/compare/$DEVELOP...$MAIN" --jq .ahead_by)
+          if [ "$ahead" = 0 ]; then
+            echo "$DEVELOP already has everything on $MAIN"
+            exit 0
+          fi
+          echo "needed=true" >> "$GITHUB_OUTPUT"
+      - if: steps.check.outputs.needed && inputs.version-command != ''
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.main-branch }}
+      - if: steps.check.outputs.needed
+        env:
+          VERSION_COMMAND: ${{ inputs.version-command }}
+        run: |
+          if [ -n "$VERSION_COMMAND" ]; then
+            version=$(bash -eo pipefail -c "$VERSION_COMMAND" | tail -n 1)
+          else
+            version=$(gh api "repos/$GH_REPO/commits/$MAIN" --jq '.sha[:7]')
+          fi
+          number=$(gh pr list --base "$DEVELOP" --head "$MAIN" --state open --json number --jq '.[0].number')
+          if [ -z "$number" ]; then
+            gh pr create --base "$DEVELOP" --head "$MAIN" \
+              --title "chore: merge $MAIN back into $DEVELOP after $version" \
+              --body "Automatic merge-back of \`$MAIN\` ($version) into \`$DEVELOP\`, by zmnatz/github-workflows. Merge it with a merge commit, never a squash."
+            number=$(gh pr list --base "$DEVELOP" --head "$MAIN" --state open --json number --jq '.[0].number')
+          fi
+          # GitHub works out whether it merges cleanly in the background.
+          for _ in $(seq 20); do
+            state=$(gh pr view "$number" --json mergeable --jq .mergeable)
+            [ "$state" != UNKNOWN ] && break
+            sleep 3
+          done
+          if [ "$state" = MERGEABLE ] && gh pr merge "$number" --merge; then
+            exit 0
+          fi
+          if [ "$state" = MERGEABLE ]; then
+            why="it merges cleanly, but GitHub refused the merge: see this run's log (a required check or review, perhaps)"
+          else
+            why="mergeable: $state"
+          fi
+          gh pr comment "$number" --body "$(cat <<EOF
+          This merge-back could not be merged automatically ($why). \`$MAIN\` only takes pull requests, so resolve it on a branch cut from \`$MAIN\`:
+
+          1. Create a branch \`chore/merge-back-$version\` from \`$MAIN\` (on GitHub: the branch menu on the Code tab, with \`$MAIN\` selected).
+          2. Open a pull request from it into \`$DEVELOP\`, and use **Resolve conflicts** on it (or locally: \`git merge origin/$DEVELOP\` on that branch, resolve, push).
+          3. Merge it with **Create a merge commit**, never a squash, and close this pull request.
+          EOF
+          )"
+          echo "::error::$MAIN could not be merged back into $DEVELOP automatically: see pull request #$number"
+          exit 1

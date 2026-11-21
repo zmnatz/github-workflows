@@ -1,0 +1,71 @@
+name: gitflow tag
+# Reusable workflow: tags a release when it merges into the main branch. The main branch moves only for
+# a release or hotfix, so a push to it whose version has no tag yet is one. Only tags: what a release
+# does (publishing, a docs site) belongs in the caller's own workflows, on `push: tags`. See README.md.
+on:
+  workflow_call:
+    inputs:
+      version-command:
+        description: "Shell command that prints the version on the main branch, such as: jq -r .version package.json"
+        type: string
+        required: true
+      tag-prefix:
+        type: string
+        default: v
+      tag-message:
+        description: "The annotated tag's message, before the version"
+        type: string
+        default: "Release "
+      main-branch:
+        type: string
+        default: main
+    secrets:
+      RELEASE_TOKEN:
+        description: "Contents: write. GitHub starts no workflows for a tag pushed with a workflow's own token."
+        required: true
+    outputs:
+      tag:
+        description: "The tag pushed, or empty when the version was already tagged"
+        value: ${{ jobs.tag.outputs.tag }}
+permissions:
+  contents: read # the push uses RELEASE_TOKEN
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - name: RELEASE_TOKEN is set
+        env:
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          if [ -z "$RELEASE_TOKEN" ]; then
+            echo "::error::The RELEASE_TOKEN secret is not set: see https://github.com/zmnatz/github-workflows#the-token. A tag pushed without it releases nothing."
+            exit 1
+          fi
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.main-branch }}
+          token: ${{ secrets.RELEASE_TOKEN }}
+      - id: tag
+        env:
+          VERSION_COMMAND: ${{ inputs.version-command }}
+          PREFIX: ${{ inputs.tag-prefix }}
+          MESSAGE: ${{ inputs.tag-message }}
+        run: |
+          version=$(bash -eo pipefail -c "$VERSION_COMMAND" | tail -n 1)
+          if [ -z "$version" ]; then
+            echo "::error::the version command printed nothing"
+            exit 1
+          fi
+          tag="$PREFIX$version"
+          if git ls-remote --exit-code origin "refs/tags/$tag" >/dev/null; then
+            echo "$tag is already tagged: nothing to release"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$tag" -m "$MESSAGE$version"
+          git push origin "$tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "::notice::Tagged $tag"

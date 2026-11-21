@@ -1,0 +1,132 @@
+name: gitflow release
+# Reusable workflow: starts a release or a hotfix. Cuts release/<version> from the develop branch (or
+# hotfix/<version> from the main branch), runs the caller's prepare command on it, pushes it and opens
+# its pull request into the main branch. See README.md.
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: "patch, minor, major, or the new version (such as 1.2.0)"
+        type: string
+        required: true
+      kind:
+        description: "release (from the develop branch) or hotfix (from the main branch, opened as a draft)"
+        type: string
+        default: release
+      prepare-command:
+        description: >-
+          Shell command run on the new branch, with HOW (the version input) and KIND set. It bumps the
+          version (and anything else: changelog, docs) in the working tree and prints the new version as
+          its last line. Empty: the version is computed from the latest tag, and nothing is changed.
+        type: string
+        default: ""
+      notes-command:
+        description: "Shell command run with VERSION set. Its output is added to the pull request's description."
+        type: string
+        default: ""
+      develop-branch:
+        type: string
+        default: develop
+      main-branch:
+        type: string
+        default: main
+      tag-prefix:
+        type: string
+        default: v
+    secrets:
+      RELEASE_TOKEN:
+        description: "Contents and pull requests: write. GitHub starts no checks for a pull request opened with a workflow's own token."
+        required: true
+    outputs:
+      version:
+        value: ${{ jobs.start.outputs.version }}
+      branch:
+        value: ${{ jobs.start.outputs.branch }}
+permissions:
+  contents: read # the writes use RELEASE_TOKEN
+jobs:
+  start:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.prepare.outputs.version }}
+      branch: ${{ steps.prepare.outputs.branch }}
+    steps:
+      - name: RELEASE_TOKEN is set
+        env:
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          KIND: ${{ inputs.kind }}
+        run: |
+          if [ -z "$RELEASE_TOKEN" ]; then
+            echo "::error::The RELEASE_TOKEN secret is not set: see https://github.com/zmnatz/github-workflows#the-token"
+            exit 1
+          fi
+          case "$KIND" in release|hotfix) ;; *) echo "::error::kind must be release or hotfix, not $KIND"; exit 1;; esac
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.kind == 'hotfix' && inputs.main-branch || inputs.develop-branch }}
+          token: ${{ secrets.RELEASE_TOKEN }}
+          fetch-depth: 0 # the tags, for the latest version
+      - id: prepare
+        env:
+          HOW: ${{ inputs.version }}
+          KIND: ${{ inputs.kind }}
+          PREPARE: ${{ inputs.prepare-command }}
+          PREFIX: ${{ inputs.tag-prefix }}
+        run: |
+          if [ -n "$PREPARE" ]; then
+            version=$(bash -eo pipefail -c "$PREPARE" | tail -n 1)
+          else
+            latest=$(git tag --list "${PREFIX}[0-9]*" --sort=-v:refname | head -n 1)
+            latest=${latest#"$PREFIX"}
+            IFS=. read -r major minor patch <<< "${latest:-0.0.0}"
+            case "$HOW" in
+              patch) version="$major.$minor.$((patch + 1))" ;;
+              minor) version="$major.$((minor + 1)).0" ;;
+              major) version="$((major + 1)).0.0" ;;
+              *) version="$HOW" ;;
+            esac
+          fi
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+            echo "::error::the new version is not x.y.z: '$version'"
+            exit 1
+          fi
+          branch="$KIND/$version"
+          if git ls-remote --exit-code origin "refs/heads/$branch" "refs/tags/$PREFIX$version" >/dev/null; then
+            echo "::error::$branch or the tag $PREFIX$version already exists"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+      - env:
+          VERSION: ${{ steps.prepare.outputs.version }}
+          BRANCH: ${{ steps.prepare.outputs.branch }}
+          KIND: ${{ inputs.kind }}
+          NOTES: ${{ inputs.notes-command }}
+          MAIN: ${{ inputs.main-branch }}
+          DEVELOP: ${{ inputs.develop-branch }}
+          PREFIX: ${{ inputs.tag-prefix }}
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$BRANCH"
+          if [ -n "$(git status --porcelain)" ]; then
+            git add -A
+            git commit -m "chore: prepare the $VERSION $KIND"
+          fi
+          git push origin "$BRANCH"
+          if [ "$KIND" = hotfix ]; then
+            if [ "$(git rev-parse HEAD)" = "$(git rev-parse "origin/$MAIN")" ]; then
+              echo "::notice::$BRANCH has nothing on it yet: push the fix to it, then open its pull request into $MAIN"
+              exit 0
+            fi
+            draft=--draft
+            body="Hotfix $VERSION, cut from \`$MAIN\`. Push the fix to \`$BRANCH\`, then mark this ready and merge it with a merge commit."
+          else
+            draft=
+            body="Release $VERSION, cut from \`$DEVELOP\`. Only fixes for the release go on \`$BRANCH\` now. Merge it with a merge commit: that tags $PREFIX$VERSION and merges \`$MAIN\` back into \`$DEVELOP\`."
+          fi
+          if [ -n "$NOTES" ] && notes=$(bash -eo pipefail -c "$NOTES" 2>/dev/null) && [ -n "$notes" ]; then
+            body="$body"$'\n\n## Changes\n\n'"$notes"
+          fi
+          gh pr create $draft --base "$MAIN" --head "$BRANCH" --title "chore: $KIND $VERSION" --body "$body"
