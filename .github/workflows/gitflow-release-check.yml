@@ -1,0 +1,58 @@
+name: gitflow release check
+# Reusable workflow: on a release/ or hotfix/ pull request into the main branch, checks now what
+# releasing will need after the merge: the version is not tagged yet, and the notes command (if any)
+# succeeds, such as a changelog section for the version existing. Other pull requests: skipped.
+# Call it from a workflow on `pull_request`. See README.md.
+on:
+  workflow_call:
+    inputs:
+      version-command:
+        description: "Shell command that prints the pull request's version, such as: jq -r .version package.json"
+        type: string
+        required: true
+      notes-command:
+        description: "Optional shell command run with VERSION set; the check fails if it fails or prints nothing"
+        type: string
+        default: ""
+      tag-prefix:
+        type: string
+        default: v
+      main-branch:
+        type: string
+        default: main
+permissions:
+  contents: read
+jobs:
+  release-check:
+    if: >-
+      github.event_name == 'pull_request' && github.base_ref == inputs.main-branch &&
+      (startsWith(github.head_ref, 'release/') || startsWith(github.head_ref, 'hotfix/'))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - env:
+          VERSION_COMMAND: ${{ inputs.version-command }}
+          NOTES: ${{ inputs.notes-command }}
+          PREFIX: ${{ inputs.tag-prefix }}
+          HEAD: ${{ github.head_ref }}
+        run: |
+          version=$(bash -eo pipefail -c "$VERSION_COMMAND" | tail -n 1)
+          if [ -z "$version" ]; then
+            echo "::error::the version command printed nothing"
+            exit 1
+          fi
+          if [ "${HEAD#*/}" != "$version" ]; then
+            echo "::warning::the branch is $HEAD, but the version is $version"
+          fi
+          if git ls-remote --exit-code origin "refs/tags/$PREFIX$version" >/dev/null; then
+            echo "::error::$PREFIX$version is already released: set the new version"
+            exit 1
+          fi
+          if [ -n "$NOTES" ]; then
+            if ! notes=$(VERSION="$version" bash -eo pipefail -c "$NOTES") || [ -z "$notes" ]; then
+              echo "::error::the notes command failed or printed nothing for $version"
+              exit 1
+            fi
+            printf '%s\n' "$notes"
+          fi
+          echo "::notice::$PREFIX$version is ready to release"

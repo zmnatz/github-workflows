@@ -1,8 +1,15 @@
 # github-workflows
 
-Reusable GitHub Actions workflows for [gitflow](https://nvie.com/posts/a-successful-git-branching-model/): `develop` is the next release, `main` is the latest release, and releases and hotfixes reach `main` on their own branches.
+Reusable GitHub Actions workflows:
 
-They only branch, tag and merge back. What a release *does* (publish a package, deploy a docs site, push an image) belongs in your own repository, in workflows that run on the tag:
+- [Gitflow](#gitflow): start a release, check it, tag it on merge into `main`, merge `main` back into `develop`. And a [script](#setting-up-a-repository) that sets a repository up for it.
+- [PR screenshots](#pr-screenshots): screenshots of a pull request's pages, posted as one comment that updates in place.
+
+## Gitflow
+
+[Gitflow](https://nvie.com/posts/a-successful-git-branching-model/): `develop` is the next release, `main` is the latest release, and releases and hotfixes reach `main` on their own branches.
+
+The gitflow workflows only branch, tag and merge back. What a release *does* (publish a package, deploy a docs site, push an image) belongs in your own repository, in workflows that run on the tag:
 
 ```mermaid
 gitGraph
@@ -22,8 +29,9 @@ gitGraph
 | [`gitflow-release.yml`](.github/workflows/gitflow-release.yml) | by hand | Cuts `release/<version>` from `develop` (or `hotfix/<version>` from `main`), runs your prepare command, pushes it and opens its pull request into `main`. |
 | [`gitflow-tag.yml`](.github/workflows/gitflow-tag.yml) | on a push to `main` | Pushes `v<version>` if that version is not tagged yet. Nothing else. |
 | [`gitflow-merge-back.yml`](.github/workflows/gitflow-merge-back.yml) | on a push to `main` | Opens a pull request from `main` into `develop` and merges it with a merge commit. On a conflict, leaves it open with the steps to resolve it, and fails. |
+| [`gitflow-release-check.yml`](.github/workflows/gitflow-release-check.yml) | on pull requests | On a `release/` or `hotfix/` pull request into `main`: fails if the version is already tagged, or the notes command fails or prints nothing. Skipped on other pull requests. |
 
-## Using them
+### Using them
 
 Three short workflows in your repository. Pin `@v1`, which moves with every compatible release.
 
@@ -93,6 +101,19 @@ jobs:
       RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
 ```
 
+And, in the workflow that runs your checks on pull requests, the release check:
+
+```yaml
+on:
+  pull_request:
+jobs:
+  release-check:
+    uses: zmnatz/github-workflows/.github/workflows/gitflow-release-check.yml@v1
+    with:
+      version-command: jq -r .version package.json
+      notes-command: ./scripts/changelog-section.sh "$VERSION" # optional
+```
+
 Then release on the tag, in your own workflows:
 
 ```yaml
@@ -101,7 +122,7 @@ on:
     tags: ["v*"]
 ```
 
-### Inputs
+#### Inputs
 
 `gitflow-release.yml`:
 
@@ -118,13 +139,24 @@ on:
 
 `gitflow-merge-back.yml`: `version-command` (optional), `develop-branch`, `main-branch`.
 
-## The token
+`gitflow-release-check.yml`: `version-command` (required), `notes-command` (optional, run with `VERSION` set), `tag-prefix`, `main-branch`.
+
+### The token
 
 All three need a `RELEASE_TOKEN` secret, and fail at once without it. GitHub starts no workflows for what a workflow's own token does: a release pull request opened with it gets no checks, and a tag pushed with it releases nothing.
 
 Create a [fine-grained token](https://github.com/settings/personal-access-tokens/new) for the repositories that use these workflows, with **Contents** and **Pull requests: Read and write**, and save it in each as the Actions secret `RELEASE_TOKEN` (**Settings > Secrets and variables > Actions**). When it expires, renew it and update the secrets. The branches, pull requests and tags then show as made by the token's owner.
 
-## Setting up a repository
+### Setting up a repository
+
+[`scripts/setup-gitflow.sh`](scripts/setup-gitflow.sh) does all of this but the token, and is safe to run again. It changes the rulesets before the default branch, so `main` is never unprotected. Look first with `--dry-run`:
+
+```sh
+scripts/setup-gitflow.sh OWNER/REPO --dry-run   # --main master, if that is its name
+scripts/setup-gitflow.sh OWNER/REPO
+```
+
+It needs `gh`, signed in with admin rights on the repository, and `jq`. By hand:
 
 1. Create `develop` from `main`, and make it the default branch.
 2. Rulesets (**Settings > Rules > Rulesets**), each targeting its branch by name, not "Default":
@@ -132,6 +164,125 @@ Create a [fine-grained token](https://github.com/settings/personal-access-tokens
    - `develop`: require a pull request; allow **squash** and **merge** (merge-backs are merge commits); no "Require linear history".
 3. Add the `RELEASE_TOKEN` secret.
 4. Anything deployed from a tag through an environment (GitHub Pages' `github-pages`, a package registry's) must allow `v*` tags in that environment's deployment rules.
+
+## PR screenshots
+
+On each pull request the workflow builds your site, starts it, and screenshots pages at
+desktop (1280px) and mobile (390px) widths. It reports console errors, page errors and
+failed requests per page, stores the images on an orphan `pr-screenshots` branch so they
+embed inline, and keeps one comment on the PR up to date.
+
+Which pages: `/` always, then the routes your rules file maps from the PR's changed
+files, then any paths listed in the PR description's `## Screenshots` section, one per
+line. Add `wait: <selector>` or `delay: <ms>` after a path for pages that fill in late.
+
+```markdown
+## Screenshots
+
+- /
+- /reports/  wait: [data-testid=report]
+```
+
+### Using it
+
+`.github/workflows/screenshots.yml`:
+
+```yaml
+name: Screenshots
+on:
+  pull_request:
+
+jobs:
+  screenshots:
+    # A fork's token can't push the images or comment.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    uses: zmnatz/github-workflows/.github/workflows/screenshots.yml@v1
+    permissions:
+      contents: write
+      pull-requests: write
+    with:
+      rules: screenshots/rules.yml
+      noise: screenshots/noise.yml # optional
+```
+
+`.github/workflows/screenshots-cleanup.yml`, which deletes a PR's images when it closes:
+
+```yaml
+name: Clean up PR screenshots
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  cleanup:
+    uses: zmnatz/github-workflows/.github/workflows/screenshots-cleanup.yml@v1
+    permissions:
+      contents: write
+```
+
+### Inputs
+
+| Input | Default | |
+|---|---|---|
+| `rules` | required | YAML mapping changed files to routes (below). |
+| `noise` | none | YAML of findings to leave out of the comment (below). |
+| `build` | `bun run build` | Builds the site. |
+| `install` | `bun install --frozen-lockfile` | Installs its dependencies. |
+| `start` | `node_modules/.bin/next start -H 127.0.0.1 -p {port}` | Serves the build. `{port}` is a free port, also in `$PORT`. |
+| `vars` | none | Shell command printing `name=value` lines; each fills `{name}` in a route. |
+| `bun-version` | `latest` | |
+| `node-version-file` | none (Node 24) | A file such as `.nvmrc` naming the Node the site builds with. The tool runs on it too, so it needs Node 22.18 or later. |
+| `tool-ref` | `v1` | Which ref of this repository to run the tool from (`screenshots/`). |
+
+The site is started inside the job from your checkout, so it needs no deploy and no
+preview URL. Because it runs on a runner with nothing else in it, it shows the build,
+not your production data or services.
+
+### Rules file
+
+```yaml
+rules:
+  - files:               # globs: ** crosses directories, * stays in one
+      - src/components/Report/**
+      - pages/report.tsx
+    routes:
+      - path: /report/
+      - path: /player/{player}/   # {name} comes from the `vars` input
+        waitFor: "[data-testid=player]"
+        delayMs: 500
+```
+
+`vars` is how a route can name a page whose id changes with your data:
+
+```yaml
+with:
+  vars: jq -r '"player=" + (.players | keys[0])' public/data/players.json
+```
+
+### Noise file
+
+```yaml
+noise:
+  - kind: request            # console, pageerror or request; omit to match all
+    pattern: "/_next/data/\\S+ 404$"   # a regular expression
+    reason: Why this is safe to ignore.
+```
+
+### Running it by hand
+
+```sh
+cd screenshots && npm install && npx playwright-core install chromium
+node capture.ts --rules rules.yml --app ../my-site --start 'node_modules/.bin/next start -p {port}' --page '/reports/'
+```
+
+It writes `screenshots/<page>-<viewport>.png` (under the directory you run it from) and `report.json`, and exits non-zero when a
+page fails to load or answers with a non-200 status.
+
+It moved here from `zmnatz/code-review`, whose `@v1` keeps working for callers not yet moved.
+
+## Developing
+
+`.github/workflows/ci.yml` lints every workflow (`actionlint`, with shellcheck) and the scripts, and runs the screenshot tool's tests: `cd screenshots && npm test`, on Node's built-in runner (Node 22.18 or later, which runs TypeScript directly). It has no build step.
 
 ## Releasing these workflows
 

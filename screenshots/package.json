@@ -1,0 +1,16 @@
+{
+  "name": "screenshots",
+  "private": true,
+  "type": "module",
+  "description": "PR screenshots: a PR's pages, posted as one comment. Run by .github/workflows/screenshots.yml.",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "test": "node --test '__tests__/*.test.ts'"
+  },
+  "dependencies": {
+    "js-yaml": "latest",
+    "playwright-core": "latest"
+  }
+}
