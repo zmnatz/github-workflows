@@ -28,6 +28,9 @@ jobs:
       github.event_name == 'pull_request' && github.base_ref == inputs.main-branch &&
       (startsWith(github.head_ref, 'release/') || startsWith(github.head_ref, 'hotfix/'))
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash # -eo pipefail, unlike the default
     steps:
       - uses: actions/checkout@v5
       - env:
@@ -36,7 +39,12 @@ jobs:
           PREFIX: ${{ inputs.tag-prefix }}
           HEAD: ${{ github.head_ref }}
         run: |
-          version=$(bash -eo pipefail -c "$VERSION_COMMAND" | tail -n 1)
+          # Not piped: without pipefail, a pipe would hide the command failing.
+          if ! out=$(bash -eo pipefail -c "$VERSION_COMMAND"); then
+            echo "::error::the version command failed: its output is above"
+            exit 1
+          fi
+          version=$(tail -n 1 <<< "$out")
           if [ -z "$version" ]; then
             echo "::error::the version command printed nothing"
             exit 1

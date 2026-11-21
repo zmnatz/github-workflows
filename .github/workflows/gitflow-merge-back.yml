@@ -25,6 +25,9 @@ permissions:
 jobs:
   merge-back:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash # -eo pipefail, unlike the default
     env:
       GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
       GH_REPO: ${{ github.repository }}
@@ -61,7 +64,12 @@ jobs:
           VERSION_COMMAND: ${{ inputs.version-command }}
         run: |
           if [ -n "$VERSION_COMMAND" ]; then
-            version=$(bash -eo pipefail -c "$VERSION_COMMAND" | tail -n 1)
+            # Not piped: without pipefail, a pipe would hide the command failing.
+            if ! out=$(bash -eo pipefail -c "$VERSION_COMMAND"); then
+              echo "::error::the version command failed: its output is above"
+              exit 1
+            fi
+            version=$(tail -n 1 <<< "$out")
           else
             version=$(gh api "repos/$GH_REPO/commits/$MAIN" --jq '.sha[:7]')
           fi

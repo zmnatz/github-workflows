@@ -47,6 +47,9 @@ permissions:
 jobs:
   start:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash # -eo pipefail, unlike the default
     outputs:
       version: ${{ steps.prepare.outputs.version }}
       branch: ${{ steps.prepare.outputs.branch }}
@@ -74,7 +77,12 @@ jobs:
           PREFIX: ${{ inputs.tag-prefix }}
         run: |
           if [ -n "$PREPARE" ]; then
-            version=$(bash -eo pipefail -c "$PREPARE" | tail -n 1)
+            # Not piped: without pipefail, a pipe would hide the command failing.
+            if ! out=$(bash -eo pipefail -c "$PREPARE"); then
+              echo "::error::the prepare command failed: its output is above"
+              exit 1
+            fi
+            version=$(tail -n 1 <<< "$out")
           else
             latest=$(git tag --list "${PREFIX}[0-9]*" --sort=-v:refname | head -n 1)
             latest=${latest#"$PREFIX"}
