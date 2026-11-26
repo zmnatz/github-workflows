@@ -292,7 +292,7 @@ Put it between your build and the upload:
       - uses: zmnatz/github-workflows/google-analytics@v1
         with:
           site-dir: dist
-          tag-id: GTM-XXXXXXX
+          tag-id: ${{ secrets.GTM_ID }}
       - uses: actions/upload-pages-artifact@v5
         with:
           path: dist
@@ -301,9 +301,11 @@ Put it between your build and the upload:
 | Input | |
 |---|---|
 | `site-dir` | The folder the site was built into. |
-| `tag-id` | The tag's ID, `GTM-XXXXXXX`. It is public (every visitor can read it), so it needs no secret. A `G-` measurement ID does not work here. |
+| `tag-id` | The tag's ID, `GTM-XXXXXXX`. A `G-` measurement ID does not work here. |
 
 The step fails if the ID is not a `GTM-` one, or if it finds no page in `site-dir`.
+
+Keep the ID in an Actions secret, so it is not written in the repository: `gh secret set GTM_ID -R OWNER/REPO`. Every visitor can still read it in the published pages. Pull requests from forks get no secrets, so run the step only where you publish (an `if:` matching your upload step's), or it fails on theirs.
 
 - A site that GitHub Pages builds from a branch has no build step to add this to: switch **Settings > Pages > Source** to **GitHub Actions** first.
 - The tag adds no cookie consent banner. If your visitors need to be asked first, the site has to do that.
