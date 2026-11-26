@@ -1,0 +1,140 @@
+name: dependabot auto-merge
+# Reusable workflow: on a Dependabot pull request whose update is one you take unreviewed (by update
+# type or group name), runs your check command and, if it passes, merges. Other updates are left open.
+# The checks run in their own job, without the token that merges: they run the new versions' code.
+# Call it from a workflow on `pull_request`. See README.md.
+on:
+  workflow_call:
+    inputs:
+      check-command:
+        description: "Shell command that installs the dependencies and checks the pull request, such as: npm ci && npm test"
+        type: string
+        required: true
+      update-types:
+        description: "Update types to merge: any of patch, minor, major. A grouped update counts as its largest."
+        type: string
+        default: ""
+      group-suffixes:
+        description: "Merge a grouped update whose group name ends with one of these, such as: -patch -auto"
+        type: string
+        default: ""
+      merge-method:
+        description: "squash, merge or rebase"
+        type: string
+        default: squash
+      bun-version:
+        description: "Set up this Bun version for the check command, such as latest"
+        type: string
+        default: ""
+      node-version-file:
+        description: "Set up the Node version named in this file, such as .nvmrc, for the check command"
+        type: string
+        default: ""
+    secrets:
+      RELEASE_TOKEN:
+        description: >-
+          Contents and pull requests: write, saved as a Dependabot secret. GitHub starts no workflows for
+          a merge made with a workflow's own token.
+        required: true
+permissions:
+  contents: read # the merge uses RELEASE_TOKEN
+  pull-requests: read
+jobs:
+  eligible:
+    # Both: a person's push to Dependabot's branch must not be merged unreviewed.
+    if: github.actor == 'dependabot[bot]' && github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash # -eo pipefail, unlike the default
+    outputs:
+      eligible: ${{ steps.eligible.outputs.eligible }}
+    steps:
+      - name: RELEASE_TOKEN is set
+        env:
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          if [ -z "$RELEASE_TOKEN" ]; then
+            echo "::error::The RELEASE_TOKEN secret is not set. Runs started by Dependabot read Dependabot secrets, not Actions secrets: see https://github.com/zmnatz/github-workflows#dependabot-auto-merge"
+            exit 1
+          fi
+      - id: meta
+        uses: dependabot/fetch-metadata@v3
+      - id: eligible
+        env:
+          UPDATE_TYPES: ${{ inputs.update-types }}
+          GROUP_SUFFIXES: ${{ inputs.group-suffixes }}
+          METHOD: ${{ inputs.merge-method }}
+          UPDATE_TYPE: ${{ steps.meta.outputs.update-type }}
+          GROUP: ${{ steps.meta.outputs.dependency-group }}
+        run: |
+          # Split on commas, spaces and newlines; read does not expand globs.
+          IFS=$', \n' read -r -d '' -a types <<< "$UPDATE_TYPES" || true
+          IFS=$', \n' read -r -d '' -a suffixes <<< "$GROUP_SUFFIXES" || true
+          if [ $((${#types[@]} + ${#suffixes[@]})) = 0 ]; then
+            echo "::error::Nothing could ever merge: set update-types, group-suffixes or both"
+            exit 1
+          fi
+          for type in "${types[@]}"; do
+            case "$type" in
+              patch|minor|major) ;;
+              *) echo "::error::update-types takes patch, minor or major, not $type"; exit 1 ;;
+            esac
+          done
+          case "$METHOD" in
+            squash|merge|rebase) ;;
+            *) echo "::error::merge-method must be squash, merge or rebase, not $METHOD"; exit 1 ;;
+          esac
+          why=""
+          for type in "${types[@]}"; do
+            if [ "$UPDATE_TYPE" = "version-update:semver-$type" ]; then why="it is a $type update"; fi
+          done
+          for suffix in "${suffixes[@]}"; do
+            if [[ "$GROUP" == *"$suffix" ]]; then why="its group, $GROUP, ends with $suffix"; fi
+          done
+          if [ -n "$why" ]; then
+            echo "eligible=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::To be merged if the checks pass: $why"
+          else
+            echo "::notice::Left for review: update type '$UPDATE_TYPE', group '$GROUP'"
+          fi
+  check:
+    needs: eligible
+    if: needs.eligible.outputs.eligible == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash # -eo pipefail, unlike the default
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # for checks that compare with the history
+          persist-credentials: false
+      - if: inputs.bun-version != ''
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ inputs.bun-version }}
+      - if: inputs.node-version-file != ''
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: ${{ inputs.node-version-file }}
+      - env:
+          CHECK_COMMAND: ${{ inputs.check-command }}
+        run: bash -eo pipefail -c "$CHECK_COMMAND"
+  merge:
+    needs: check # skipped along with it
+    runs-on: ubuntu-latest
+    permissions: {} # nothing is checked out or run here, and the merge uses RELEASE_TOKEN
+    defaults:
+      run:
+        shell: bash # -eo pipefail, unlike the default
+    steps:
+      - id: merge
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          METHOD: ${{ inputs.merge-method }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # --repo also stops gh looking for a local branch to delete.
+          gh pr merge "$PR_URL" "--$METHOD" --match-head-commit "$SHA" --delete-branch --repo "$GITHUB_REPOSITORY"

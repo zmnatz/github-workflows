@@ -4,6 +4,7 @@ Reusable GitHub Actions workflows and actions:
 
 - [Gitflow](#gitflow): start a release, check it, tag it on merge into `main`, merge `main` back into `develop`. And a [script](#setting-up-a-repository) that sets a repository up for it.
 - [PR screenshots](#pr-screenshots): screenshots of a pull request's pages, posted as one comment that updates in place.
+- [Dependabot auto-merge](#dependabot-auto-merge): check and merge the Dependabot pull requests you take unreviewed.
 - [Google Analytics](#google-analytics): add Google Analytics to every page of a site as it is deployed.
 
 ## Gitflow
@@ -281,6 +282,60 @@ page fails to load or answers with a non-200 status.
 
 It moved here from `zmnatz/code-review`, whose `@v1` keeps working for callers not yet moved.
 
+## Dependabot auto-merge
+
+On a [Dependabot](https://docs.github.com/en/code-security/dependabot) pull request, [`dependabot-automerge.yml`](.github/workflows/dependabot-automerge.yml) looks at what is being updated. If it is an update you take without review, it runs your check command and, if that passes, merges the pull request and deletes its branch. Other updates are left open for you, and pull requests that are not Dependabot's are skipped.
+
+`.github/workflows/dependabot-automerge.yml`:
+
+```yaml
+name: dependabot-automerge
+on:
+  pull_request:
+jobs:
+  automerge:
+    uses: zmnatz/github-workflows/.github/workflows/dependabot-automerge.yml@v1
+    permissions:
+      contents: read
+      pull-requests: read
+    with:
+      update-types: patch # and/or: group-suffixes: -patch -auto
+      node-version-file: .nvmrc # optional
+      check-command: npm ci && npm test
+    secrets:
+      RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+```
+
+| Input | Default | |
+|---|---|---|
+| `check-command` | required | Installs the dependencies and checks the pull request. Runs with `bash -eo pipefail`; may be several lines. |
+| `update-types` | none | Any of `patch`, `minor`, `major`. A grouped update counts as its largest. |
+| `group-suffixes` | none | Also merge a grouped update whose group name in `dependabot.yml` ends with one of these, such as `-patch -auto`, whatever its update type. |
+| `merge-method` | `squash` | `squash`, `merge` or `rebase`. The repository must allow it. |
+| `bun-version` | none | Sets up Bun, such as `latest`. |
+| `node-version-file` | none | Sets up the Node named in a file such as `.nvmrc`. Without one, the runner's own Node. |
+
+Set `update-types`, `group-suffixes` or both: an update qualifies if either matches, and with neither the workflow fails.
+
+### The token
+
+It needs a `RELEASE_TOKEN` secret, and fails at once without it. A merge made with a workflow's own token starts no workflows, so nothing would deploy or release from it; one made with this token does.
+
+Runs started by Dependabot cannot read Actions secrets. Save the token as a **Dependabot** secret (**Settings > Secrets and variables > Dependabot**), as well as the Actions one if the [gitflow](#the-token) workflows use it:
+
+```sh
+gh secret set RELEASE_TOKEN --app dependabot -R OWNER/REPO
+```
+
+It needs the same [permissions](#the-token): **Contents** and **Pull requests: Read and write**. To merge updates to your workflows' actions (the `github-actions` ecosystem), it also needs **Workflows: Read and write**.
+
+### What to expect
+
+- The check command runs in its own job, with a read-only token and no secrets, because it runs the new versions' code. A check that needs a secret does not work here.
+- Only the commit that was checked is merged. If someone else pushes to Dependabot's branch, nothing is merged.
+- It does not wait for your other workflows. If the branch requires their status checks, or a review, GitHub refuses the merge and the run fails.
+- If a merge is refused because another landed just before it, comment `@dependabot rebase` on the pull request: it is then checked and merged again, on the new base. **Re-run failed jobs** would merge without checking the two together.
+
 ## Google Analytics
 
 [`google-analytics`](google-analytics/action.yml) is an action (a step, not a workflow) that adds [Google Analytics](https://analytics.google.com/) to a built site: to every `.html` file with a `</head>`, just before it. It works with any generator, because it edits what was built: nothing changes in the site's theme or templates, and a local build is not tracked.
@@ -313,7 +368,7 @@ Keep the ID in an Actions secret, so it is not written in the repository: `gh se
 
 ## Developing
 
-`.github/workflows/ci.yml` lints every workflow (`actionlint`, with shellcheck) and the scripts, and runs the screenshot tool's tests: `cd screenshots && npm test`, on Node's built-in runner (Node 22.18 or later, which runs TypeScript directly). It has no build step. The Google Analytics action's tests are `node --test 'google-analytics/__tests__/*.test.mjs'`; CI also runs the action on a one-page site. Its script is plain JavaScript, so that it runs on whatever Node the caller's job has, without setting one up.
+`.github/workflows/ci.yml` lints every workflow (`actionlint`, with shellcheck) and the scripts, and runs the screenshot tool's tests: `cd screenshots && npm test`, on Node's built-in runner (Node 22.18 or later, which runs TypeScript directly). It has no build step. The Dependabot auto-merge workflow's tests, `node --test 'dependabot-automerge/__tests__/*.test.mjs'`, run its shell scripts as read from its YAML. The Google Analytics action's tests are `node --test 'google-analytics/__tests__/*.test.mjs'`; CI also runs the action on a one-page site. Its script is plain JavaScript, so that it runs on whatever Node the caller's job has, without setting one up.
 
 ## Releasing these workflows
 

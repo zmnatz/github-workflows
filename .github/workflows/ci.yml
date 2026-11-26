@@ -29,6 +29,15 @@ jobs:
           node-version: 24
       - run: npm install --no-audit --no-fund --no-package-lock
       - run: npm test
+  dependabot-automerge:
+    # The workflow's own scripts, run from its YAML (dependabot-automerge/__tests__).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: node --test 'dependabot-automerge/__tests__/*.test.mjs'
   google-analytics:
     # The script's tests, and the action itself on a one-page site.
     runs-on: ubuntu-latest
