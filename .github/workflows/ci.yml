@@ -29,3 +29,18 @@ jobs:
           node-version: 24
       - run: npm install --no-audit --no-fund --no-package-lock
       - run: npm test
+  google-analytics:
+    # The script's tests, and the action itself on a one-page site.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: node --test 'google-analytics/__tests__/*.test.mjs'
+      - run: mkdir site && echo '<html><head></head><body></body></html>' > site/index.html
+      - uses: ./google-analytics
+        with:
+          site-dir: site
+          tag-id: GTM-TEST123
+      - run: grep -q 'gtm.js?id=GTM-TEST123' site/index.html

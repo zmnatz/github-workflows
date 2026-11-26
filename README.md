@@ -1,9 +1,10 @@
 # github-workflows
 
-Reusable GitHub Actions workflows:
+Reusable GitHub Actions workflows and actions:
 
 - [Gitflow](#gitflow): start a release, check it, tag it on merge into `main`, merge `main` back into `develop`. And a [script](#setting-up-a-repository) that sets a repository up for it.
 - [PR screenshots](#pr-screenshots): screenshots of a pull request's pages, posted as one comment that updates in place.
+- [Google Analytics](#google-analytics): add a Google tag to every page of a site as it is deployed.
 
 ## Gitflow
 
@@ -280,9 +281,36 @@ page fails to load or answers with a non-200 status.
 
 It moved here from `zmnatz/code-review`, whose `@v1` keeps working for callers not yet moved.
 
+## Google Analytics
+
+[`google-analytics`](google-analytics/action.yml) is an action (a step, not a workflow) that adds a [Google Tag Manager](https://tagmanager.google.com/) tag to every HTML page of a built site, just before `</head>`. It works with any generator, because it edits what was built: nothing changes in the site's theme or templates, and a local build is not tracked.
+
+Put it between your build and the upload:
+
+```yaml
+      - run: npm run build
+      - uses: zmnatz/github-workflows/google-analytics@v1
+        with:
+          site-dir: dist
+          tag-id: GTM-XXXXXXX
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: dist
+```
+
+| Input | |
+|---|---|
+| `site-dir` | The folder the site was built into. |
+| `tag-id` | The tag's ID, `GTM-XXXXXXX`. It is public (every visitor can read it), so it needs no secret. A `G-` measurement ID does not work here. |
+
+The step fails if the ID is not a `GTM-` one, or if it finds no page in `site-dir`.
+
+- A site that GitHub Pages builds from a branch has no build step to add this to: switch **Settings > Pages > Source** to **GitHub Actions** first.
+- The tag adds no cookie consent banner. If your visitors need to be asked first, the site has to do that.
+
 ## Developing
 
-`.github/workflows/ci.yml` lints every workflow (`actionlint`, with shellcheck) and the scripts, and runs the screenshot tool's tests: `cd screenshots && npm test`, on Node's built-in runner (Node 22.18 or later, which runs TypeScript directly). It has no build step.
+`.github/workflows/ci.yml` lints every workflow (`actionlint`, with shellcheck) and the scripts, and runs the screenshot tool's tests: `cd screenshots && npm test`, on Node's built-in runner (Node 22.18 or later, which runs TypeScript directly). It has no build step. The Google Analytics action's tests are `node --test 'google-analytics/__tests__/*.test.mjs'`; CI also runs the action on a one-page site. Its script is plain JavaScript, so that it runs on the runner's own Node without changing the caller's.
 
 ## Releasing these workflows
 
