@@ -4,7 +4,7 @@ Reusable GitHub Actions workflows and actions:
 
 - [Gitflow](#gitflow): start a release, check it, tag it on merge into `main`, merge `main` back into `develop`. And a [script](#setting-up-a-repository) that sets a repository up for it.
 - [PR screenshots](#pr-screenshots): screenshots of a pull request's pages, posted as one comment that updates in place.
-- [Google Analytics](#google-analytics): add a Google tag to every page of a site as it is deployed.
+- [Google Analytics](#google-analytics): add Google Analytics to every page of a site as it is deployed.
 
 ## Gitflow
 
@@ -283,7 +283,7 @@ It moved here from `zmnatz/code-review`, whose `@v1` keeps working for callers n
 
 ## Google Analytics
 
-[`google-analytics`](google-analytics/action.yml) is an action (a step, not a workflow) that adds a [Google Tag Manager](https://tagmanager.google.com/) tag to a built site: to every `.html` file with a `</head>`, just before it. It works with any generator, because it edits what was built: nothing changes in the site's theme or templates, and a local build is not tracked.
+[`google-analytics`](google-analytics/action.yml) is an action (a step, not a workflow) that adds [Google Analytics](https://analytics.google.com/) to a built site: to every `.html` file with a `</head>`, just before it. It works with any generator, because it edits what was built: nothing changes in the site's theme or templates, and a local build is not tracked.
 
 Put it between your build and the upload:
 
@@ -292,7 +292,7 @@ Put it between your build and the upload:
       - uses: zmnatz/github-workflows/google-analytics@v1
         with:
           site-dir: dist
-          tag-id: ${{ secrets.GTM_ID }}
+          tag-id: ${{ secrets.GA_ID }}
       - uses: actions/upload-pages-artifact@v5
         with:
           path: dist
@@ -301,11 +301,11 @@ Put it between your build and the upload:
 | Input | |
 |---|---|
 | `site-dir` | The folder the site was built into. |
-| `tag-id` | The tag's ID, `GTM-XXXXXXX`. A `G-` measurement ID does not work here. |
+| `tag-id` | The measurement ID of the site's web data stream, `G-XXXXXXXXXX`. A Tag Manager `GTM-` ID does not work here. |
 
-The step fails if the ID is not a `GTM-` one, or if no page in `site-dir` has a `</head>`. It runs on the Node that is on the `PATH`, which must be 18.17 or newer.
+The step fails if the ID is not a `G-` one, or if no page in `site-dir` has a `</head>`. It runs on the Node that is on the `PATH`, which must be 18.17 or newer.
 
-Keep the ID in an Actions secret, so it is not written in the repository: `gh secret set GTM_ID -R OWNER/REPO`. Every visitor can still read it in the published pages. Pull requests from forks get no secrets, so run the step only where you publish (an `if:` matching your upload step's), or it fails on theirs.
+Keep the ID in an Actions secret, so it is not written in the repository: `gh secret set GA_ID -R OWNER/REPO`. Every visitor can still read it in the published pages. Pull requests from forks get no secrets, so run the step only where you publish (an `if:` matching your upload step's), or it fails on theirs.
 
 - A site that GitHub Pages builds from a branch has no build step to add this to: switch **Settings > Pages > Source** to **GitHub Actions** first.
 - The step edits the files in place. `actions/jekyll-build-pages` builds in a container and may leave them owned by root; if the step is refused permission, `sudo chown -R "$USER" _site` first.

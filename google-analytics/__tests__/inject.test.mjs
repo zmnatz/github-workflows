@@ -8,17 +8,18 @@ import { fileURLToPath } from 'node:url';
 
 const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), '..', 'inject.mjs');
 const PAGE = '<!doctype html>\n<html><head><meta charset="utf-8"><title>t</title></head><body>hi</body></html>\n';
-// What a page gets: a marker, then the tag as Google gave it for the container.
-const TAG = `<!-- google-analytics GTM-ABC123 -->
-<script async src="https://www.googletagmanager.com/gtm.js?id=GTM-ABC123"></script>
+// What a page gets: a marker, then Google Analytics' tag for the measurement ID.
+const TAG = `<!-- google-analytics G-ABC123 -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-ABC123"></script>
 <script>
   window.dataLayer = window.dataLayer || [];
   function gtag(){dataLayer.push(arguments);}
   gtag('js', new Date());
+  gtag('config', 'G-ABC123');
 </script>`;
 
 /** A built site with these files, and the script run on it. */
-function run(files, tagId = 'GTM-ABC123', dir = mkdtempSync(join(tmpdir(), 'site-'))) {
+function run(files, tagId = 'G-ABC123', dir = mkdtempSync(join(tmpdir(), 'site-'))) {
   for (const [path, text] of Object.entries(files)) {
     mkdirSync(dirname(join(dir, path)), { recursive: true });
     writeFileSync(join(dir, path), text);
@@ -48,7 +49,7 @@ describe('inject', () => {
 
   it('adds the tag once, however often it runs', () => {
     const first = run({ 'index.html': PAGE });
-    const again = run({}, 'GTM-ABC123', first.dir);
+    const again = run({}, 'G-ABC123', first.dir);
     assert.equal(again.status, 0, again.stderr);
     assert.equal(again.read('index.html'), PAGE.replace('</head>', `${TAG}\n</head>`));
   });
@@ -59,11 +60,11 @@ describe('inject', () => {
     assert.match(site.stderr, /no HTML page/);
   });
 
-  it('refuses what is not a tag manager ID, and changes nothing', () => {
-    for (const id of ['', 'G-ABC123', 'GTM-ABC"></script>']) {
+  it('refuses what is not a measurement ID, and changes nothing', () => {
+    for (const id of ['', 'GTM-ABC123', 'G-ABC\'></script>']) {
       const site = run({ 'index.html': PAGE }, id);
       assert.notEqual(site.status, 0, id);
-      assert.match(site.stderr, /GTM-/);
+      assert.match(site.stderr, /like G-/);
       assert.equal(site.read('index.html'), PAGE);
     }
   });
