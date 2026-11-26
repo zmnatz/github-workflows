@@ -67,4 +67,10 @@ describe('inject', () => {
       assert.equal(site.read('index.html'), PAGE);
     }
   });
+
+  it('takes a folder named like a page for a folder', () => {
+    const site = run({ 'notes.html/index.html': PAGE });
+    assert.equal(site.status, 0, site.stderr);
+    assert.match(site.stdout, /1 page\b/);
+  });
 });

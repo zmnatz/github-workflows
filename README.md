@@ -283,7 +283,7 @@ It moved here from `zmnatz/code-review`, whose `@v1` keeps working for callers n
 
 ## Google Analytics
 
-[`google-analytics`](google-analytics/action.yml) is an action (a step, not a workflow) that adds a [Google Tag Manager](https://tagmanager.google.com/) tag to every HTML page of a built site, just before `</head>`. It works with any generator, because it edits what was built: nothing changes in the site's theme or templates, and a local build is not tracked.
+[`google-analytics`](google-analytics/action.yml) is an action (a step, not a workflow) that adds a [Google Tag Manager](https://tagmanager.google.com/) tag to a built site: to every `.html` file with a `</head>`, just before it. It works with any generator, because it edits what was built: nothing changes in the site's theme or templates, and a local build is not tracked.
 
 Put it between your build and the upload:
 
@@ -303,16 +303,17 @@ Put it between your build and the upload:
 | `site-dir` | The folder the site was built into. |
 | `tag-id` | The tag's ID, `GTM-XXXXXXX`. A `G-` measurement ID does not work here. |
 
-The step fails if the ID is not a `GTM-` one, or if it finds no page in `site-dir`.
+The step fails if the ID is not a `GTM-` one, or if no page in `site-dir` has a `</head>`. It runs on the Node that is on the `PATH`, which must be 18.17 or newer.
 
 Keep the ID in an Actions secret, so it is not written in the repository: `gh secret set GTM_ID -R OWNER/REPO`. Every visitor can still read it in the published pages. Pull requests from forks get no secrets, so run the step only where you publish (an `if:` matching your upload step's), or it fails on theirs.
 
 - A site that GitHub Pages builds from a branch has no build step to add this to: switch **Settings > Pages > Source** to **GitHub Actions** first.
+- The step edits the files in place. `actions/jekyll-build-pages` builds in a container and may leave them owned by root; if the step is refused permission, `sudo chown -R "$USER" _site` first.
 - The tag adds no cookie consent banner. If your visitors need to be asked first, the site has to do that.
 
 ## Developing
 
-`.github/workflows/ci.yml` lints every workflow (`actionlint`, with shellcheck) and the scripts, and runs the screenshot tool's tests: `cd screenshots && npm test`, on Node's built-in runner (Node 22.18 or later, which runs TypeScript directly). It has no build step. The Google Analytics action's tests are `node --test 'google-analytics/__tests__/*.test.mjs'`; CI also runs the action on a one-page site. Its script is plain JavaScript, so that it runs on the runner's own Node without changing the caller's.
+`.github/workflows/ci.yml` lints every workflow (`actionlint`, with shellcheck) and the scripts, and runs the screenshot tool's tests: `cd screenshots && npm test`, on Node's built-in runner (Node 22.18 or later, which runs TypeScript directly). It has no build step. The Google Analytics action's tests are `node --test 'google-analytics/__tests__/*.test.mjs'`; CI also runs the action on a one-page site. Its script is plain JavaScript, so that it runs on whatever Node the caller's job has, without setting one up.
 
 ## Releasing these workflows
 

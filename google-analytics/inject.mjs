@@ -1,7 +1,7 @@
 // Adds a Google tag to every page of a built site, just before </head>. Run by action.yml:
 //
 //   node inject.mjs <site-dir> <tag-id>
-import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const [dir, id] = process.argv.slice(2);
@@ -9,6 +9,9 @@ function fail(message) {
   console.error(`::error::${message}`);
   process.exit(1);
 }
+// An older Node lists only the top folder, and would leave the other pages out without a word.
+const [major, minor] = process.versions.node.split('.').map(Number);
+if (major < 18 || (major === 18 && minor < 17)) fail(`Node ${process.versions.node} is too old: use 18.17 or newer`);
 // The ID goes into the page's HTML, and only a tag manager ID works with this snippet.
 if (!/^GTM-[A-Z0-9]+$/.test(id ?? '')) fail(`The tag ID must look like GTM-XXXXXXX, not "${id ?? ''}"`);
 
@@ -27,6 +30,7 @@ let count = 0;
 for (const name of readdirSync(dir, { recursive: true })) {
   if (!name.endsWith('.html')) continue;
   const path = join(dir, name);
+  if (!statSync(path).isFile()) continue;
   const html = readFileSync(path, 'utf8');
   if (!HEAD_END.test(html)) continue; // such as a site verification file
   if (!html.includes(MARK)) writeFileSync(path, html.replace(HEAD_END, (end) => `${MARK}\n${tag}\n${end}`));
