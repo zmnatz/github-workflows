@@ -1,0 +1,17 @@
+name: Google Analytics
+description: Adds a Google Tag Manager tag to every page of a built site, before it is deployed
+inputs:
+  tag-id:
+    description: "The tag's ID: GTM-XXXXXXX"
+    required: true
+  site-dir:
+    description: The folder the site was built into
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        SITE_DIR: ${{ inputs.site-dir }}
+        TAG_ID: ${{ inputs.tag-id }}
+      run: node "$GITHUB_ACTION_PATH/inject.mjs" "$SITE_DIR" "$TAG_ID"
