@@ -42,5 +42,5 @@ jobs:
       - uses: ./google-analytics
         with:
           site-dir: site
-          tag-id: GTM-TEST123
-      - run: grep -q 'gtm.js?id=GTM-TEST123' site/index.html
+          tag-id: G-TEST123
+      - run: grep -q 'gtag/js?id=G-TEST123' site/index.html

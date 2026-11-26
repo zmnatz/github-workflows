@@ -1,8 +1,8 @@
 name: Google Analytics
-description: Adds a Google Tag Manager tag to every page of a built site, before it is deployed
+description: Adds Google Analytics to every page of a built site, before it is deployed
 inputs:
   tag-id:
-    description: "The tag's ID: GTM-XXXXXXX"
+    description: "The Analytics measurement ID: G-XXXXXXXXXX"
     required: true
   site-dir:
     description: The folder the site was built into
